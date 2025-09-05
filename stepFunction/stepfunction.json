@@ -1,0 +1,122 @@
+{
+  "Comment": "A description of my state machine",
+  "StartAt": "Convert JSON to Parquet",
+  "States": {
+    "Convert JSON to Parquet": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::glue:startJobRun.sync",
+      "Parameters": {
+        "JobName": "JSON2Parquet-job"
+      },
+      "Next": "Create Raw Data Catalog"
+    },
+    "Create Raw Data Catalog": {
+      "Type": "Task",
+      "Parameters": {
+        "Name": "s3_crawler_raw"
+      },
+      "Resource": "arn:aws:states:::aws-sdk:glue:startCrawler",
+      "Next": "Get Status First Crawler"
+    },
+    "Get Status First Crawler": {
+      "Type": "Task",
+      "Parameters": {
+        "Name": "s3_crawler_raw"
+      },
+      "Resource": "arn:aws:states:::aws-sdk:glue:getCrawler",
+      "ResultPath": "$.response.get_crawler",
+      "Next": "Is First Crawler Running?"
+    },
+    "Is First Crawler Running?": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Next": "Wait for First Crawler",
+          "Or": [
+            {
+              "Variable": "$.response.get_crawler.Crawler.State",
+              "StringEquals": "RUNNING"
+            },
+            {
+              "Variable": "$.response.get_crawler.Crawler.State",
+              "StringEquals": "STOPPING"
+            }
+          ]
+        }
+      ],
+      "Default": "Process Data"
+    },
+    "Wait for First Crawler": {
+      "Type": "Wait",
+      "Seconds": 5,
+      "Next": "Get Status First Crawler"
+    },
+    "Process Data": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::glue:startJobRun.sync",
+      "Parameters": {
+        "JobName": "data-normalization-job"
+      },
+      "Next": "Create Processed Data Catalog"
+    },
+    "Create Processed Data Catalog": {
+      "Type": "Task",
+      "Parameters": {
+        "Name": "s3_crawler_processed"
+      },
+      "Resource": "arn:aws:states:::aws-sdk:glue:startCrawler",
+      "Next": "Get Status Second Crawler"
+    },
+    "Get Status Second Crawler": {
+      "Type": "Task",
+      "Parameters": {
+        "Name": "s3_crawler_processed"
+      },
+      "Resource": "arn:aws:states:::aws-sdk:glue:getCrawler",
+      "ResultPath": "$.response.get_crawler",
+      "Next": "Is Second Crawler running?"
+    },
+    "Is Second Crawler running?": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Next": "Wait for Second Crawler",
+          "Or": [
+            {
+              "Variable": "$.response.get_crawler.Crawler.State",
+              "StringEquals": "RUNNING"
+            },
+            {
+              "Variable": "$.response.get_crawler.Crawler.State",
+              "StringEquals": "STOPPING"
+            }
+          ]
+        }
+      ],
+      "Default": "Query Processed Data"
+    },
+    "Wait for Second Crawler": {
+      "Type": "Wait",
+      "Seconds": 5,
+      "Next": "Get Status Second Crawler"
+    },
+    "Query Processed Data": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::athena:startQueryExecution",
+      "Parameters": {
+        "QueryString": "SELECT SUM(shipping_cost) AS \"Total_Cost_in_$\", SUM(shipping_distance) AS \"Total_Distance_in_miles\", SUM(quantity) AS \"Total_Fuel_Quantity_in_gal\" FROM \"shipping-db\".\"transformed_data\";"
+      },
+      "Next": "SNS Publish"
+    },
+    "SNS Publish": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "Message.$": "$",
+        "TopicArn": "arn:aws:sns:us-east-1:220435133874:shipping_data_queries"
+      },
+      "End": true
+    }
+  },
+  "QueryLanguage": "JSONPath"
+}
